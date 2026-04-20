@@ -112,6 +112,14 @@ class Orchestrator:
             total_tokens.prompt_tokens += result.total_tokens.prompt_tokens
             total_tokens.completion_tokens += result.total_tokens.completion_tokens
             total_tokens.total_tokens += result.total_tokens.total_tokens
+        # critic_loop 下 executor 可能被踩多轮，老轮次结果被 executor_node 搬到
+        # state.extra["tokens_carry"] 里，这里补回来——不然 session_done 的 token
+        # 统计会少算前面重试的部分。
+        carry = state.extra.get("tokens_carry") if isinstance(state.extra, dict) else None
+        if carry:
+            total_tokens.prompt_tokens += int(carry.get("prompt", 0))
+            total_tokens.completion_tokens += int(carry.get("completion", 0))
+            total_tokens.total_tokens += int(carry.get("total", 0))
 
         await self.mq.publish(EventType.SESSION_DONE, None, {
             "session_id": session_id,

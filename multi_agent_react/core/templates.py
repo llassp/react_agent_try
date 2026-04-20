@@ -162,6 +162,18 @@ def executor_node(deps: TemplateDeps) -> Node:
         # 才不会被前端事件流当成"同一个 agent 发了两次 agent_start"。
         round_idx = int(state.extra.get("executor_round", 0))
         state.extra["executor_round"] = round_idx + 1
+
+        # critic_loop 下会被多次踩到：把上一轮的 token 累加累计器里再清空 agent_results，
+        # 否则 Orchestrator 最终按 state.agent_results 加总 token 时会丢掉前面所有轮次。
+        if state.agent_results:
+            acc = state.extra.setdefault(
+                "tokens_carry",
+                {"prompt": 0, "completion": 0, "total": 0},
+            )
+            for prev in state.agent_results:
+                acc["prompt"] += prev.total_tokens.prompt_tokens
+                acc["completion"] += prev.total_tokens.completion_tokens
+                acc["total"] += prev.total_tokens.total_tokens
         state.agent_results = []
 
         async def run_one(i: int, task: str) -> AgentResult:

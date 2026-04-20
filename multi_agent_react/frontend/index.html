@@ -736,6 +736,7 @@
             
             initAgentCards();
             initContextBars();
+            resetGraph();
             document.getElementById('logContainer').innerHTML = '';
             document.getElementById('resultSection').classList.remove('show');
             updateMetrics();
@@ -1203,6 +1204,7 @@
             state.tokenHistory = { 'agent-0': [], 'agent-1': [], 'agent-2': [] };
             initAgentCards();
             initContextBars();
+            resetGraph();
             document.getElementById('logContainer').innerHTML = '';
             document.getElementById('resultSection').classList.remove('show');
             updateMetrics();
@@ -1308,6 +1310,14 @@
             if (status) el.classList.add(status);
             const stepEl = document.getElementById(`gn-step-${name}`);
             if (stepEl && step != null) stepEl.textContent = `#${step}`;
+        }
+        function resetGraph() {
+            const section = document.getElementById('graphSection');
+            const nodesEl = document.getElementById('graphNodes');
+            const label = document.getElementById('graphTemplateLabel');
+            if (section) section.style.display = 'none';
+            if (nodesEl) nodesEl.innerHTML = '';
+            if (label) label.textContent = '';
         }
 
         // 拉取可用模板填到下拉菜单
