@@ -46,9 +46,16 @@ class Orchestrator:
         
         self.use_thinking = os.environ.get("USE_THINKING_MODE", "false").lower() == "true"
     
-    async def run(self, query: str) -> SessionResult:
-        """执行完整的多 Agent 工作流"""
-        session_id = str(uuid.uuid4())
+    async def run(self, query: str, session_id: Optional[str] = None) -> SessionResult:
+        """执行完整的多 Agent 工作流。
+
+        ``session_id`` 可由调用方预先生成并传入，便于 API 层先返回 session_id 给
+        客户端建立 SSE 订阅，再异步触发本方法，避免事件在 SSE 未连接时全部发完。
+        调用方传入的 session_id 必须保证在 ``MessageQueue`` 里已 ``ensure_session``，
+        并且 ``Database`` 里尚未创建对应记录（本方法会负责写入）。
+        """
+        if session_id is None:
+            session_id = str(uuid.uuid4())
         logger.info(f"Starting session {session_id} with query: {query}")
         
         # 创建会话记录
