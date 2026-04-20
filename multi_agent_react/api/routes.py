@@ -28,6 +28,10 @@ class QueryRequest(BaseModel):
     query: str
     num_agents: Optional[int] = 3
     max_iterations: Optional[int] = 10
+    # DAG 模板 id，留空等同于 classic；错的名字会在 orchestrator 里降级回 classic
+    template: Optional[str] = None
+    # critic_loop 下最多回到 executor 的次数
+    max_retries: Optional[int] = 1
 
 
 class QueryAcceptedResponse(BaseModel):
@@ -77,6 +81,8 @@ async def _run_query_background(
     query: str,
     num_agents: int,
     max_iterations: int,
+    template: Optional[str],
+    max_retries: int,
 ) -> None:
     """在后台任务里跑 Orchestrator，将所有事件通过共享 mq 推给 SSE。"""
     try:
@@ -90,6 +96,8 @@ async def _run_query_background(
             tools=_build_default_tools(),
             num_agents=num_agents,
             max_iterations=max_iterations,
+            template=template,
+            max_retries=max_retries,
         )
         await orchestrator.run(query, session_id=session_id)
     except Exception as e:
@@ -139,6 +147,8 @@ async def create_query(request: QueryRequest) -> QueryAcceptedResponse:
                 query=request.query,
                 num_agents=request.num_agents or 3,
                 max_iterations=request.max_iterations or 10,
+                template=request.template,
+                max_retries=request.max_retries if request.max_retries is not None else 1,
             ),
             name=f"query:{session_id}",
         )
@@ -149,6 +159,12 @@ async def create_query(request: QueryRequest) -> QueryAcceptedResponse:
         return QueryAcceptedResponse(session_id=session_id, status="accepted")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/templates")
+async def list_templates():
+    """列出可用的 DAG 编排模板，供前端下拉菜单使用。"""
+    return {"templates": Orchestrator.list_templates(), "default": "classic"}
 
 
 @router.get("/sessions")

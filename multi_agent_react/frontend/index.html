@@ -490,6 +490,33 @@
         .history-status.running { background: #78350f; color: #fde68a; }
         .history-status.error { background: #7f1d1d; color: #fecaca; }
         .history-empty { color: #64748b; font-size: 12px; padding: 8px 0; }
+
+        /* DAG 节点进度小面板 */
+        .graph-section {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 20px;
+        }
+        .graph-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .graph-template { color: #94a3b8; font-size: 12px; }
+        .graph-template code { background: #0f172a; padding: 1px 6px; border-radius: 4px; color: #c4b5fd; }
+        .graph-nodes { display: flex; flex-wrap: wrap; gap: 8px; }
+        .graph-node {
+            background: #0f172a;
+            border: 1px solid #334155;
+            color: #cbd5e1;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            transition: all 0.2s ease;
+        }
+        .graph-node.running { border-color: #f59e0b; color: #fde68a; box-shadow: 0 0 0 2px rgba(245,158,11,0.15); }
+        .graph-node.done { border-color: #059669; color: #6ee7b7; }
+        .graph-node .gn-step { font-size: 10px; color: #64748b; margin-left: 6px; }
+
+        .template-picker { color: #94a3b8; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+        .template-picker select { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 4px; padding: 4px 8px; }
     </style>
 </head>
 <body>
@@ -504,8 +531,20 @@
                 <input type="text" class="query-input" id="queryInput" 
                        placeholder="输入你的问题..." 
                        value="请计算 123 * 456，并搜索 Python 的相关信息">
+                <span class="template-picker">编排模板
+                    <select id="templateSelect"></select>
+                </span>
                 <button class="query-btn" id="queryBtn" onclick="submitQuery()">提交查询</button>
             </div>
+        </div>
+
+        <!-- DAG 节点进度 -->
+        <div class="graph-section" id="graphSection" style="display:none;">
+            <div class="graph-header">
+                <h3 class="section-title" style="margin:0;">DAG 节点进度</h3>
+                <span class="graph-template" id="graphTemplateLabel"></span>
+            </div>
+            <div class="graph-nodes" id="graphNodes"></div>
         </div>
 
         <!-- Replay 提示条 -->
@@ -702,10 +741,12 @@
             updateMetrics();
             
             try {
+                const templateSel = document.getElementById('templateSelect');
+                const template = templateSel ? templateSel.value || null : null;
                 const response = await fetch('/api/query', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query, num_agents: 3, max_iterations: 10 })
+                    body: JSON.stringify({ query, num_agents: 3, max_iterations: 10, template })
                 });
                 
                 if (!response.ok) {
@@ -748,7 +789,9 @@
             const SSE_EVENT_TYPES = [
                 'agent_start', 'thinking', 'thinking_delta', 'content_delta',
                 'action', 'observation', 'token_update', 'context_compressed',
-                'agent_done', 'session_done', 'error', 'heartbeat'
+                'agent_done', 'session_done', 'error', 'heartbeat',
+                // DAG 编排事件（PR-B）
+                'graph_start', 'node_start', 'node_done', 'node_error', 'graph_done'
             ];
             const dispatch = (event) => {
                 try {
@@ -778,6 +821,22 @@
             const { event_type, agent_id, data, timestamp } = event;
             
             switch (event_type) {
+                case 'graph_start':
+                    renderGraph(data.graph || null);
+                    break;
+                case 'node_start':
+                    markGraphNode(data.node, 'running', data.step);
+                    break;
+                case 'node_done':
+                    markGraphNode(data.node, 'done', data.step);
+                    break;
+                case 'node_error':
+                    markGraphNode(data.node, 'error', null);
+                    addLogEntry('graph', 'node_error', `${data.node}: ${data.error}`);
+                    break;
+                case 'graph_done':
+                    // 保持面板，不隐藏，给用户看到"跑完了哪些节点"
+                    break;
                 case 'agent_start':
                     updateAgentStatus(agent_id, 'running');
                     break;
@@ -1221,10 +1280,63 @@
             }
         };
 
+        // DAG 节点进度面板
+        function renderGraph(graph) {
+            const section = document.getElementById('graphSection');
+            const nodesEl = document.getElementById('graphNodes');
+            const label = document.getElementById('graphTemplateLabel');
+            if (!graph || !graph.nodes) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = 'block';
+            label.textContent = '入口：' + (graph.entry || '?');
+            nodesEl.innerHTML = '';
+            graph.nodes.forEach(n => {
+                const el = document.createElement('div');
+                el.className = 'graph-node';
+                el.dataset.node = n.name;
+                el.title = n.description || '';
+                el.innerHTML = `${n.name}<span class="gn-step" id="gn-step-${n.name}"></span>`;
+                nodesEl.appendChild(el);
+            });
+        }
+        function markGraphNode(name, status, step) {
+            const el = document.querySelector(`.graph-node[data-node="${name}"]`);
+            if (!el) return;
+            el.classList.remove('running', 'done', 'error');
+            if (status) el.classList.add(status);
+            const stepEl = document.getElementById(`gn-step-${name}`);
+            if (stepEl && step != null) stepEl.textContent = `#${step}`;
+        }
+
+        // 拉取可用模板填到下拉菜单
+        async function loadTemplates() {
+            try {
+                const resp = await fetch('/api/templates');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const payload = await resp.json();
+                const sel = document.getElementById('templateSelect');
+                sel.innerHTML = '';
+                (payload.templates || ['classic']).forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    if (name === (payload.default || 'classic')) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+            } catch (e) {
+                console.warn('loadTemplates failed:', e);
+                const sel = document.getElementById('templateSelect');
+                sel.innerHTML = '<option value="classic">classic</option>';
+            }
+        }
+
         // 初始化
         initAgentCards();
         initContextBars();
         loadSessionsList();
+        loadTemplates();
         
         // 窗口大小改变时重绘图表
         window.addEventListener('resize', drawTokenChart);
