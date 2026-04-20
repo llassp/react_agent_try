@@ -397,6 +397,99 @@
             color: #e2e8f0;
             white-space: pre-wrap;
         }
+
+        /* 历史会话 / Replay UI */
+        .history-section {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            border: 1px solid #334155;
+        }
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .history-header .section-title { margin-bottom: 0; }
+        .history-actions { display: flex; gap: 8px; align-items: center; }
+        .history-btn {
+            background: #334155;
+            border: 1px solid #475569;
+            color: #cbd5e1;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .history-btn:hover { background: #475569; }
+        .history-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .history-speed { color: #94a3b8; font-size: 12px; }
+        .history-speed select {
+            background: #0f172a;
+            color: #cbd5e1;
+            border: 1px solid #334155;
+            border-radius: 4px;
+            padding: 3px 6px;
+            margin-left: 4px;
+        }
+        .replay-banner {
+            display: none;
+            background: linear-gradient(90deg, #1e40af, #7c3aed);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+        .replay-banner.show { display: block; }
+        .history-list {
+            max-height: 260px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .history-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 8px 12px;
+            cursor: pointer;
+            transition: border-color 0.15s ease;
+        }
+        .history-item:hover { border-color: #8b5cf6; }
+        .history-item.active { border-color: #8b5cf6; background: #1a2338; }
+        .history-item .hi-query {
+            color: #e2e8f0;
+            font-size: 13px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+            margin-right: 12px;
+        }
+        .history-item .hi-meta {
+            color: #94a3b8;
+            font-size: 11px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .history-status {
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+        .history-status.completed { background: #065f46; color: #6ee7b7; }
+        .history-status.running { background: #78350f; color: #fde68a; }
+        .history-status.error { background: #7f1d1d; color: #fecaca; }
+        .history-empty { color: #64748b; font-size: 12px; padding: 8px 0; }
     </style>
 </head>
 <body>
@@ -414,11 +507,37 @@
                 <button class="query-btn" id="queryBtn" onclick="submitQuery()">提交查询</button>
             </div>
         </div>
-        
+
+        <!-- Replay 提示条 -->
+        <div class="replay-banner" id="replayBanner">
+            <span id="replayBannerText">回放中…</span>
+            <button class="history-btn" id="replayStopBtn" style="margin-left:12px;" onclick="stopReplay()">结束回放</button>
+        </div>
+
         <!-- Result Section -->
         <div class="result-section" id="resultSection">
             <h3 class="section-title">最终答案</h3>
             <div class="result-content" id="resultContent"></div>
+        </div>
+
+        <!-- 历史会话 / Replay -->
+        <div class="history-section">
+            <div class="history-header">
+                <h3 class="section-title">历史会话</h3>
+                <div class="history-actions">
+                    <span class="history-speed">回放速度
+                        <select id="replaySpeed">
+                            <option value="50">极速 (50ms)</option>
+                            <option value="150" selected>正常 (150ms)</option>
+                            <option value="400">慢速 (400ms)</option>
+                        </select>
+                    </span>
+                    <button class="history-btn" id="refreshHistoryBtn" onclick="loadSessionsList()">刷新</button>
+                </div>
+            </div>
+            <div class="history-list" id="historyList">
+                <div class="history-empty">加载中…</div>
+            </div>
         </div>
         
         <!-- Metrics -->
@@ -484,7 +603,15 @@
                 'agent-0': [],
                 'agent-1': [],
                 'agent-2': []
-            }
+            },
+            // Replay：非空表示正在回放一个历史 session
+            // generation 是单调递增的代号：每次点开新回放或 stopReplay 都自增，
+            // 让旧 loop 下一轮 sleep 醒来发现代号变了就退出，避免两个回放同时跑。
+            replay: {
+                active: false,
+                sessionId: null,
+                generation: 0,
+            },
         };
         
         const agentColors = {
@@ -692,18 +819,20 @@
                         document.getElementById('resultContent').textContent = data.final_answer;
                         document.getElementById('resultSection').classList.add('show');
                     }
-                    {
+                    // 回放模式下不要把查询按钮和 SSE 当作真实会话来处理，
+                    // 否则会放开按钮让用户中途发起新会话，把回放 UI 冲烂。
+                    if (!state.replay.active) {
                         const qb = document.getElementById('queryBtn');
                         if (qb) { qb.disabled = false; qb.textContent = '提交查询'; }
-                    }
-                    if (state.eventSource) {
-                        state.eventSource.close();
+                        if (state.eventSource) {
+                            state.eventSource.close();
+                        }
                     }
                     break;
                     
                 case 'error':
                     addLogEntry(agent_id || 'system', 'error', data.error);
-                    {
+                    if (!state.replay.active) {
                         const qb = document.getElementById('queryBtn');
                         if (qb) { qb.disabled = false; qb.textContent = '提交查询'; }
                     }
@@ -923,9 +1052,179 @@
             }
         }, 1000);
         
+        // ===== 历史会话 / Replay =====
+
+        // 拉取最近会话列表
+        async function loadSessionsList() {
+            const listEl = document.getElementById('historyList');
+            try {
+                const resp = await fetch('/api/sessions?limit=50');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const payload = await resp.json();
+                const sessions = payload.sessions || [];
+                if (sessions.length === 0) {
+                    listEl.innerHTML = '<div class="history-empty">暂无历史会话</div>';
+                    return;
+                }
+                listEl.innerHTML = '';
+                sessions.forEach(s => {
+                    const item = document.createElement('div');
+                    item.className = 'history-item';
+                    item.dataset.sessionId = s.id;
+                    const query = (s.query || '').slice(0, 120);
+                    const created = s.created_at ? formatTime(s.created_at) : '';
+                    const status = s.status || 'running';
+                    item.innerHTML = `
+                        <div class="hi-query" title="${escapeHtml(s.query || '')}">${escapeHtml(query)}</div>
+                        <div class="hi-meta">
+                            <span>${created}</span>
+                            <span class="history-status ${status}">${status}</span>
+                        </div>
+                    `;
+                    item.onclick = () => replaySession(s.id);
+                    listEl.appendChild(item);
+                });
+            } catch (e) {
+                console.error('loadSessionsList error', e);
+                listEl.innerHTML = `<div class="history-empty">加载失败：${escapeHtml(e.message || String(e))}</div>`;
+            }
+        }
+
+        function formatTime(ts) {
+            // sqlite 返回 "YYYY-MM-DD HH:MM:SS"，直接截短展示
+            return String(ts).replace('T', ' ').slice(0, 19);
+        }
+
+        function escapeHtml(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        // 回放一个历史 session
+        //
+        // 用 generation 单调递增来判定"当前循环是不是最新的一次回放"：
+        // 之前写成 state.replay.cancelled=true 再 state.replay={..., cancelled:false}，
+        // 旧循环 sleep 回来读的是"新对象"的 cancelled，永远是 false，结果两个 replay
+        // loop 同时往同一个 UI 喂事件。用 generation 彻底断开两次 replay 的耦合。
+        async function replaySession(sessionId) {
+            const myGen = ++state.replay.generation;
+            // 如果还有活跃的 SSE，先关掉，避免和回放互相覆盖
+            if (state.eventSource) {
+                try { state.eventSource.close(); } catch (_) {}
+                state.eventSource = null;
+            }
+
+            let events;
+            try {
+                const resp = await fetch(`/api/events/${sessionId}`);
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const payload = await resp.json();
+                events = payload.events || [];
+            } catch (e) {
+                console.error('replaySession fetch error', e);
+                addLogEntry('system', 'error', `回放加载失败: ${e.message}`);
+                return;
+            }
+
+            // fetch 回来前可能已被更新一次的 replay 抢走，放弃
+            if (myGen !== state.replay.generation) return;
+
+            if (events.length === 0) {
+                addLogEntry('system', 'error', '该会话没有事件记录（可能是旧 session，持久化尚未开启时创建）');
+                return;
+            }
+
+            // 重置 UI，复用 submitQuery 的重置逻辑片段
+            state.totalTokens = 0;
+            state.totalSteps = 0;
+            state.startTime = Date.now();
+            state.tokenHistory = { 'agent-0': [], 'agent-1': [], 'agent-2': [] };
+            initAgentCards();
+            initContextBars();
+            document.getElementById('logContainer').innerHTML = '';
+            document.getElementById('resultSection').classList.remove('show');
+            updateMetrics();
+
+            state.sessionId = sessionId;
+            state.replay.active = true;
+            state.replay.sessionId = sessionId;
+
+            // 高亮选中项
+            document.querySelectorAll('.history-item').forEach(it => {
+                it.classList.toggle('active', it.dataset.sessionId === sessionId);
+            });
+
+            const banner = document.getElementById('replayBanner');
+            document.getElementById('replayBannerText').textContent = `回放中：${sessionId.slice(0, 8)}…（共 ${events.length} 事件）`;
+            banner.classList.add('show');
+
+            // 查询按钮在回放期间禁用
+            const qb = document.getElementById('queryBtn');
+            if (qb) { qb.disabled = true; qb.textContent = '回放中'; }
+
+            const delayMs = parseInt(document.getElementById('replaySpeed').value, 10) || 150;
+
+            for (let i = 0; i < events.length; i++) {
+                // 被后来的 replay/stop 抢走，直接退出，不做清理——清理由那一次负责
+                if (myGen !== state.replay.generation) return;
+                const ev = events[i];
+                // event_logs 里的字段是 {agent_id, event_type, event_data, created_at}
+                // handleEvent 期望 {event_type, agent_id, data, timestamp}
+                try {
+                    handleEvent({
+                        event_type: ev.event_type,
+                        agent_id: ev.agent_id,
+                        data: ev.event_data || {},
+                        timestamp: ev.created_at,
+                    });
+                } catch (e) {
+                    console.error('replay handleEvent failed', e, ev);
+                }
+                // 最后一个事件不再 sleep
+                if (i < events.length - 1) await sleep(delayMs);
+            }
+
+            // 正常跑完才清，且只清自己这一代
+            if (myGen === state.replay.generation) finishReplay();
+        }
+
+        function sleep(ms) {
+            return new Promise(res => setTimeout(res, ms));
+        }
+
+        function stopReplay() {
+            if (!state.replay.active) return;
+            // 让任何正在跑的 loop 下一轮读到不一样的 generation 自动退出
+            state.replay.generation++;
+            finishReplay();
+        }
+
+        function finishReplay() {
+            state.replay.active = false;
+            state.replay.sessionId = null;
+            const banner = document.getElementById('replayBanner');
+            banner.classList.remove('show');
+            const qb = document.getElementById('queryBtn');
+            if (qb) { qb.disabled = false; qb.textContent = '提交查询'; }
+        }
+
+        // 在 session_done 之后刷新历史列表（让新 session 立即可回放）
+        const _origHandleEvent = handleEvent;
+        handleEvent = function(event) {
+            _origHandleEvent(event);
+            if (event && event.event_type === 'session_done') {
+                // 不阻塞，静默刷新
+                loadSessionsList();
+            }
+        };
+
         // 初始化
         initAgentCards();
         initContextBars();
+        loadSessionsList();
         
         // 窗口大小改变时重绘图表
         window.addEventListener('resize', drawTokenChart);

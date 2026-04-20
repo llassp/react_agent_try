@@ -6,7 +6,8 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-from storage.db import init_database
+from storage.db import init_database, db
+from core.message_queue import mq, Message
 from api.routes import router as api_router
 from api.sse import router as sse_router
 from logger.log import get_logger
@@ -17,6 +18,27 @@ load_dotenv()
 logger = get_logger()
 
 
+async def _persist_event_to_db(message: Message) -> None:
+    """把 MessageQueue 发布的每个事件落进 ``event_logs`` 表。
+
+    有了这条持久化路径，``GET /api/events/{session_id}`` 才能返回真实历史，
+    前端才能对已完成的 session 做"录像回放"。失败只记日志，不影响主流程。
+    """
+    session_id = message.data.get("session_id") if isinstance(message.data, dict) else None
+    if not session_id:
+        # 极个别无 session_id 的事件就不落库，反正前端也按 session_id 回捞。
+        return
+    try:
+        await db.log_event(
+            session_id=session_id,
+            agent_id=message.agent_id,
+            event_type=message.event_type,
+            event_data=message.data,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to persist event {message.event_type}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -24,8 +46,11 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Multi-Agent ReAct System...")
     await init_database()
     logger.info("Database initialized")
+    mq.set_persistence_handler(_persist_event_to_db)
+    logger.info("MessageQueue persistence handler attached (event_logs)")
     yield
     # 关闭时清理
+    mq.set_persistence_handler(None)
     logger.info("Shutting down...")
 
 

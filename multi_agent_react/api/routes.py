@@ -9,7 +9,7 @@ from core.llm import DeepSeekClient
 from core.context import SharedContext
 from core.message_queue import mq, EventType
 from core.orchestrator import Orchestrator
-from core.tools.calculator import CalculatorTool, CalculatorToolSimple
+from core.tools.calculator import CalculatorTool
 from core.tools.search import SearchTool, WeatherTool, DateTimeTool
 from storage.db import db
 
@@ -66,7 +66,6 @@ def _build_default_tools():
     """
     return [
         CalculatorTool(),
-        CalculatorToolSimple(),
         SearchTool(),
         WeatherTool(),
         DateTimeTool(),
@@ -150,6 +149,15 @@ async def create_query(request: QueryRequest) -> QueryAcceptedResponse:
         return QueryAcceptedResponse(session_id=session_id, status="accepted")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sessions")
+async def list_sessions(limit: int = 50, offset: int = 0):
+    """按创建时间倒序列出最近会话，供 Dashboard 历史回放功能使用。"""
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    sessions = await db.list_sessions(limit=limit, offset=offset)
+    return {"sessions": sessions, "limit": limit, "offset": offset}
 
 
 @router.get("/sessions/{session_id}", response_model=SessionResponse)
