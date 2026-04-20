@@ -605,10 +605,12 @@
                 'agent-2': []
             },
             // Replay：非空表示正在回放一个历史 session
+            // generation 是单调递增的代号：每次点开新回放或 stopReplay 都自增，
+            // 让旧 loop 下一轮 sleep 醒来发现代号变了就退出，避免两个回放同时跑。
             replay: {
                 active: false,
                 sessionId: null,
-                cancelled: false,
+                generation: 0,
             },
         };
         
@@ -817,18 +819,20 @@
                         document.getElementById('resultContent').textContent = data.final_answer;
                         document.getElementById('resultSection').classList.add('show');
                     }
-                    {
+                    // 回放模式下不要把查询按钮和 SSE 当作真实会话来处理，
+                    // 否则会放开按钮让用户中途发起新会话，把回放 UI 冲烂。
+                    if (!state.replay.active) {
                         const qb = document.getElementById('queryBtn');
                         if (qb) { qb.disabled = false; qb.textContent = '提交查询'; }
-                    }
-                    if (state.eventSource) {
-                        state.eventSource.close();
+                        if (state.eventSource) {
+                            state.eventSource.close();
+                        }
                     }
                     break;
                     
                 case 'error':
                     addLogEntry(agent_id || 'system', 'error', data.error);
-                    {
+                    if (!state.replay.active) {
                         const qb = document.getElementById('queryBtn');
                         if (qb) { qb.disabled = false; qb.textContent = '提交查询'; }
                     }
@@ -1100,8 +1104,13 @@
         }
 
         // 回放一个历史 session
+        //
+        // 用 generation 单调递增来判定"当前循环是不是最新的一次回放"：
+        // 之前写成 state.replay.cancelled=true 再 state.replay={..., cancelled:false}，
+        // 旧循环 sleep 回来读的是"新对象"的 cancelled，永远是 false，结果两个 replay
+        // loop 同时往同一个 UI 喂事件。用 generation 彻底断开两次 replay 的耦合。
         async function replaySession(sessionId) {
-            if (state.replay.active) stopReplay();
+            const myGen = ++state.replay.generation;
             // 如果还有活跃的 SSE，先关掉，避免和回放互相覆盖
             if (state.eventSource) {
                 try { state.eventSource.close(); } catch (_) {}
@@ -1120,6 +1129,9 @@
                 return;
             }
 
+            // fetch 回来前可能已被更新一次的 replay 抢走，放弃
+            if (myGen !== state.replay.generation) return;
+
             if (events.length === 0) {
                 addLogEntry('system', 'error', '该会话没有事件记录（可能是旧 session，持久化尚未开启时创建）');
                 return;
@@ -1137,7 +1149,8 @@
             updateMetrics();
 
             state.sessionId = sessionId;
-            state.replay = { active: true, sessionId, cancelled: false };
+            state.replay.active = true;
+            state.replay.sessionId = sessionId;
 
             // 高亮选中项
             document.querySelectorAll('.history-item').forEach(it => {
@@ -1155,7 +1168,8 @@
             const delayMs = parseInt(document.getElementById('replaySpeed').value, 10) || 150;
 
             for (let i = 0; i < events.length; i++) {
-                if (state.replay.cancelled) break;
+                // 被后来的 replay/stop 抢走，直接退出，不做清理——清理由那一次负责
+                if (myGen !== state.replay.generation) return;
                 const ev = events[i];
                 // event_logs 里的字段是 {agent_id, event_type, event_data, created_at}
                 // handleEvent 期望 {event_type, agent_id, data, timestamp}
@@ -1173,7 +1187,8 @@
                 if (i < events.length - 1) await sleep(delayMs);
             }
 
-            finishReplay();
+            // 正常跑完才清，且只清自己这一代
+            if (myGen === state.replay.generation) finishReplay();
         }
 
         function sleep(ms) {
@@ -1182,11 +1197,14 @@
 
         function stopReplay() {
             if (!state.replay.active) return;
-            state.replay.cancelled = true;
+            // 让任何正在跑的 loop 下一轮读到不一样的 generation 自动退出
+            state.replay.generation++;
+            finishReplay();
         }
 
         function finishReplay() {
-            state.replay = { active: false, sessionId: null, cancelled: false };
+            state.replay.active = false;
+            state.replay.sessionId = null;
             const banner = document.getElementById('replayBanner');
             banner.classList.remove('show');
             const qb = document.getElementById('queryBtn');
@@ -1203,14 +1221,6 @@
             }
         };
 
-        // 定时更新耗时
-        setInterval(() => {
-            if (state.startTime) {
-                const elapsed = Math.floor((Date.now() - state.startTime) / 1000);
-                document.getElementById('elapsedTime').textContent = `${elapsed}s`;
-            }
-        }, 1000);
-        
         // 初始化
         initAgentCards();
         initContextBars();
