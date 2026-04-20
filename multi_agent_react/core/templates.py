@@ -166,19 +166,30 @@ def executor_node(deps: TemplateDeps) -> Node:
 
         async def run_one(i: int, task: str) -> AgentResult:
             agent_id = f"agent-{i}" if round_idx == 0 else f"agent-{i}-r{round_idx}"
-            agent = ReactAgent(
-                agent_id=agent_id,
-                tools=deps.tools,
-                context=deps.context,
-                llm=deps.llm,
-                message_queue=deps.mq,
-                max_iterations=deps.max_iterations,
-                use_thinking=deps.use_thinking,
-                session_id=state.session_id,
-            )
-            await deps.db.create_agent_execution(state.session_id, agent_id, task)
+            # 整个 run_one 必须不抛：gather 下面用 return_exceptions=False，run_one
+            # 只要抛出就会把其他 agent 全部 cancel 掉。Agent 跑挂了 / DB 写挂了都要
+            # 就地吃掉，转成一个 error AgentResult 回去，剩下的 agent 继续跑。
             try:
+                agent = ReactAgent(
+                    agent_id=agent_id,
+                    tools=deps.tools,
+                    context=deps.context,
+                    llm=deps.llm,
+                    message_queue=deps.mq,
+                    max_iterations=deps.max_iterations,
+                    use_thinking=deps.use_thinking,
+                    session_id=state.session_id,
+                )
+                await deps.db.create_agent_execution(state.session_id, agent_id, task)
                 result = await agent.run(task)
+                await deps.db.update_agent_execution(
+                    session_id=state.session_id,
+                    agent_id=agent_id,
+                    final_answer=result.final_answer,
+                    trajectory=result.trajectory,
+                    status="completed",
+                )
+                return result
             except Exception as e:
                 logger.exception(f"[executor] agent {agent_id} crashed: {e}")
                 return AgentResult(
@@ -189,14 +200,6 @@ def executor_node(deps: TemplateDeps) -> Node:
                     total_tokens=TokenUsage(),
                     status="error",
                 )
-            await deps.db.update_agent_execution(
-                session_id=state.session_id,
-                agent_id=agent_id,
-                final_answer=result.final_answer,
-                trajectory=result.trajectory,
-                status="completed",
-            )
-            return result
 
         results = await asyncio.gather(
             *(run_one(i, t) for i, t in enumerate(state.tasks)),
