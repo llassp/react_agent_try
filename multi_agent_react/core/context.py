@@ -48,31 +48,94 @@ class SharedContext:
         message = {
             "role": role,
             "content": content,
-            "_token_count": len(content) // 4,
+            "_token_count": len(content or "") // 4,
         }
         if metadata:
             message["_metadata"] = metadata
         
         self._contexts[agent_id].append(message)
     
+    def add_assistant_tool_calls(
+        self,
+        agent_id: str,
+        tool_calls: List[Dict[str, Any]],
+        content: str = "",
+    ):
+        """添加带 tool_calls 的 assistant 消息（OpenAI function calling 规范）。
+
+        ``tool_calls`` 必须是 OpenAI 兼容接口期望的原始结构，例如::
+
+            [{"id": "call_x", "type": "function",
+              "function": {"name": "calc", "arguments": "{...}"}}]
+
+        调用方随后必须用 :meth:`add_tool_result` 为 **每一个** id 回填一条 role=tool
+        的结果消息，否则下一次 LLM 调用会因 tool_call_id 不匹配而报 400。
+        """
+        if agent_id not in self._contexts:
+            self._contexts[agent_id] = []
+
+        content_for_tokens = content or ""
+        # tool_calls 本身也占 token；粗略估计一下以便触发压缩
+        serialized_calls = ""
+        try:
+            import json as _json
+            serialized_calls = _json.dumps(tool_calls, ensure_ascii=False)
+        except Exception:
+            serialized_calls = str(tool_calls)
+
+        self._contexts[agent_id].append({
+            "role": "assistant",
+            "content": content_for_tokens,
+            "tool_calls": tool_calls,
+            "_token_count": (len(content_for_tokens) + len(serialized_calls)) // 4,
+        })
+
     def add_tool_result(self, agent_id: str, tool_call_id: str, content: str):
-        """添加工具调用结果"""
-        self.add_message(
-            agent_id=agent_id,
-            role="tool",
-            content=content,
-            metadata={"tool_call_id": tool_call_id}
-        )
+        """添加工具调用结果（role=tool，必须携带 tool_call_id）。"""
+        if agent_id not in self._contexts:
+            self._contexts[agent_id] = []
+
+        self._contexts[agent_id].append({
+            "role": "tool",
+            "content": content,
+            "tool_call_id": tool_call_id,
+            "_token_count": len(content or "") // 4,
+        })
     
-    def get_messages_for_llm(self, agent_id: str) -> List[Dict[str, str]]:
-        """获取用于 LLM 调用的消息列表（去除内部字段）"""
+    def get_messages_for_llm(self, agent_id: str) -> List[Dict[str, Any]]:
+        """获取用于 LLM 调用的消息列表（去除内部字段，保留 tool_calls / tool_call_id）"""
         messages = self._contexts.get(agent_id, [])
-        return [{"role": m["role"], "content": m["content"]} for m in messages]
+        out: List[Dict[str, Any]] = []
+        for m in messages:
+            role = m["role"]
+            if role == "tool":
+                tool_call_id = m.get("tool_call_id") or m.get("_metadata", {}).get("tool_call_id")
+                if not tool_call_id:
+                    # 缺 tool_call_id 的 tool 消息一定会让 OpenAI 兼容接口报错，
+                    # 宁可丢弃也不要整条请求失败。
+                    logger.warning("Dropping tool message without tool_call_id")
+                    continue
+                out.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": m["content"],
+                })
+            elif role == "assistant" and m.get("tool_calls"):
+                entry: Dict[str, Any] = {
+                    "role": "assistant",
+                    "tool_calls": m["tool_calls"],
+                }
+                # OpenAI 规范允许 content 为 null；部分模型更偏好空字符串
+                entry["content"] = m.get("content") or ""
+                out.append(entry)
+            else:
+                out.append({"role": role, "content": m.get("content", "")})
+        return out
     
     def get_token_count(self, agent_id: str) -> int:
         """计算上下文的 token 数量"""
         messages = self._contexts.get(agent_id, [])
-        return sum(msg.get("_token_count", len(msg["content"]) // 4) for msg in messages)
+        return sum(msg.get("_token_count", len(msg.get("content") or "") // 4) for msg in messages)
     
     def get_usage_ratio(self, agent_id: str) -> float:
         """获取上下文使用率"""

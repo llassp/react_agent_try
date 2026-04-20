@@ -581,12 +581,18 @@
                     body: JSON.stringify({ query, num_agents: 3, max_iterations: 10 })
                 });
                 
+                if (!response.ok) {
+                    const text = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${text}`);
+                }
+                
                 const data = await response.json();
                 state.sessionId = data.session_id;
                 
-                // 显示结果
-                document.getElementById('resultContent').textContent = data.final_answer;
-                document.getElementById('resultSection').classList.add('show');
+                // 后端现在立刻返回 session_id，真正的 final_answer 会在
+                // SSE 的 session_done 事件里到达；这里先清空结果区。
+                document.getElementById('resultContent').textContent = '';
+                document.getElementById('resultSection').classList.remove('show');
                 
                 // 连接 SSE
                 connectSSE(data.session_id);
@@ -594,10 +600,10 @@
             } catch (error) {
                 console.error('Error:', error);
                 addLogEntry('system', 'error', `请求失败: ${error.message}`);
-            } finally {
                 queryBtn.disabled = false;
                 queryBtn.textContent = '提交查询';
             }
+            // 注意：按钮恢复由 session_done / error 事件负责，这里不再 finally 置回
         }
         
         // 连接 SSE
@@ -656,8 +662,19 @@
                     break;
                     
                 case 'session_done':
-                    state.totalTokens = data.total_tokens.total;
+                    if (data.total_tokens) {
+                        state.totalTokens = data.total_tokens.total || 0;
+                    }
                     updateMetrics();
+                    // 展示最终答案（后端现在通过 SSE 推送而不是 POST 响应返回）
+                    if (data.final_answer) {
+                        document.getElementById('resultContent').textContent = data.final_answer;
+                        document.getElementById('resultSection').classList.add('show');
+                    }
+                    {
+                        const qb = document.getElementById('queryBtn');
+                        if (qb) { qb.disabled = false; qb.textContent = '提交查询'; }
+                    }
                     if (state.eventSource) {
                         state.eventSource.close();
                     }
@@ -665,6 +682,10 @@
                     
                 case 'error':
                     addLogEntry(agent_id || 'system', 'error', data.error);
+                    {
+                        const qb = document.getElementById('queryBtn');
+                        if (qb) { qb.disabled = false; qb.textContent = '提交查询'; }
+                    }
                     break;
             }
             

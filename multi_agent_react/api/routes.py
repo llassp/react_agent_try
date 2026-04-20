@@ -1,14 +1,17 @@
+import asyncio
+import uuid
 from typing import Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
+from loguru import logger
 
 from core.llm import DeepSeekClient
 from core.context import SharedContext
-from core.message_queue import MessageQueue
+from core.message_queue import mq, EventType
 from core.orchestrator import Orchestrator
 from core.tools.calculator import CalculatorTool, CalculatorToolSimple
 from core.tools.search import SearchTool, WeatherTool, DateTimeTool
-from storage.db import Database
+from storage.db import db
 
 
 router = APIRouter()
@@ -21,11 +24,10 @@ class QueryRequest(BaseModel):
     max_iterations: Optional[int] = 10
 
 
-class QueryResponse(BaseModel):
+class QueryAcceptedResponse(BaseModel):
+    """/api/query 异步受理响应：仅返回 session_id，实际结果通过 SSE 推送。"""
     session_id: str
-    query: str
-    final_answer: str
-    total_tokens: dict
+    status: str = "accepted"
 
 
 class SessionResponse(BaseModel):
@@ -50,76 +52,96 @@ class ThinkingResponse(BaseModel):
     thinking_steps: list
 
 
-# 依赖注入
-async def get_llm():
-    return DeepSeekClient()
+def _build_default_tools():
+    """为一次查询构造默认工具集合。
+
+    故意放在函数里而不是模块级：部分工具将来如果要注入 API key 等运行时配置，
+    这里就是扩展点。
+    """
+    return [
+        CalculatorTool(),
+        CalculatorToolSimple(),
+        SearchTool(),
+        WeatherTool(),
+        DateTimeTool(),
+    ]
 
 
-async def get_db():
-    db = Database()
-    await db.init_tables()
-    return db
-
-
-def get_mq():
-    from core.message_queue import mq
-    return mq
-
-
-def get_context():
-    return SharedContext()
-
-
-@router.post("/query", response_model=QueryResponse)
-async def create_query(
-    request: QueryRequest,
-    llm: DeepSeekClient = Depends(get_llm),
-    db: Database = Depends(get_db),
-    mq = Depends(get_mq),
-    context: SharedContext = Depends(get_context)
-):
-    """创建新查询，启动多 Agent 处理"""
+async def _run_query_background(
+    session_id: str,
+    query: str,
+    num_agents: int,
+    max_iterations: int,
+) -> None:
+    """在后台任务里跑 Orchestrator，将所有事件通过共享 mq 推给 SSE。"""
     try:
-        # 准备工具
-        tools = [
-            CalculatorTool(),
-            CalculatorToolSimple(),
-            SearchTool(),
-            WeatherTool(),
-            DateTimeTool()
-        ]
-        
-        # 创建调度器
+        llm = DeepSeekClient()
+        context = SharedContext()
         orchestrator = Orchestrator(
             llm=llm,
             context=context,
             message_queue=mq,
             database=db,
-            tools=tools,
-            num_agents=request.num_agents,
-            max_iterations=request.max_iterations
+            tools=_build_default_tools(),
+            num_agents=num_agents,
+            max_iterations=max_iterations,
         )
+        await orchestrator.run(query, session_id=session_id)
+    except Exception as e:
+        # 保证任何内部异常都会以 error + session_done 的形式被 SSE 客户端看到，
+        # 避免 Dashboard 永远停在 "处理中…" 状态。
+        logger.exception(f"Background query {session_id} failed: {e}")
+        await mq.publish(EventType.ERROR, None, {
+            "session_id": session_id,
+            "error": str(e),
+        })
+        try:
+            await db.update_session(session_id, f"执行出错: {e}", status="error")
+        except Exception:
+            logger.exception("Failed to mark session as error")
+        await mq.publish(EventType.SESSION_DONE, None, {
+            "session_id": session_id,
+            "final_answer": f"执行出错: {e}",
+            "status": "error",
+            "total_tokens": {"prompt": 0, "completion": 0, "total": 0},
+        })
+
+
+@router.post("/query", response_model=QueryAcceptedResponse, status_code=202)
+async def create_query(request: QueryRequest) -> QueryAcceptedResponse:
+    """异步受理查询：立即返回 session_id，客户端再用它订阅 SSE。
+
+    之前的实现是同步阻塞——POST 会一直等到所有 Agent 跑完才返回 ``final_answer``，
+    但此时会话已经结束，再去 ``GET /sse/stream/{session_id}`` 已经没有事件可订阅，
+    "实时 Dashboard" 实际上拿不到任何中间事件。现在改成：
+
+    1. 立即生成 session_id；
+    2. 在 MessageQueue 里为该 session_id 预创建重放缓冲；
+    3. 把 Orchestrator.run 丢进后台任务；
+    4. 立即返回 ``{session_id, status="accepted"}``。
+
+    客户端收到后去 ``/sse/stream/{session_id}`` 订阅即可；订阅建立时会自动
+    把订阅窗口之前已经发生的事件先复播一遍，避免丢 agent_start。
+    """
+    try:
+        session_id = str(uuid.uuid4())
+        # 关键：在后台任务还没来得及 publish 任何事件之前就把缓冲建起来
+        mq.ensure_session(session_id)
         
-        # 执行
-        result = await orchestrator.run(request.query)
+        asyncio.create_task(_run_query_background(
+            session_id=session_id,
+            query=request.query,
+            num_agents=request.num_agents or 3,
+            max_iterations=request.max_iterations or 10,
+        ))
         
-        return QueryResponse(
-            session_id=result.session_id,
-            query=result.query,
-            final_answer=result.final_answer,
-            total_tokens={
-                "prompt": result.total_tokens.prompt_tokens,
-                "completion": result.total_tokens.completion_tokens,
-                "total": result.total_tokens.total_tokens
-            }
-        )
-    
+        return QueryAcceptedResponse(session_id=session_id, status="accepted")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/sessions/{session_id}", response_model=SessionResponse)
-async def get_session(session_id: str, db: Database = Depends(get_db)):
+async def get_session(session_id: str):
     """获取会话信息"""
     session = await db.get_session(session_id)
     if not session:
@@ -136,7 +158,7 @@ async def get_session(session_id: str, db: Database = Depends(get_db)):
 
 
 @router.get("/tokens/{session_id}", response_model=TokenSummaryResponse)
-async def get_token_summary(session_id: str, db: Database = Depends(get_db)):
+async def get_token_summary(session_id: str):
     """获取会话的 Token 使用统计"""
     summary = await db.get_session_token_summary(session_id)
     
@@ -150,14 +172,14 @@ async def get_token_summary(session_id: str, db: Database = Depends(get_db)):
 
 
 @router.get("/events/{session_id}")
-async def get_session_events(session_id: str, db: Database = Depends(get_db)):
+async def get_session_events(session_id: str):
     """获取会话的所有事件"""
     events = await db.get_session_events(session_id)
     return {"session_id": session_id, "events": events}
 
 
 @router.get("/thinking/{session_id}/{agent_id}")
-async def get_agent_thinking(session_id: str, agent_id: str, db: Database = Depends(get_db)):
+async def get_agent_thinking(session_id: str, agent_id: str):
     """获取 Agent 的思考过程"""
     events = await db.get_session_events(session_id)
     
