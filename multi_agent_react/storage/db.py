@@ -228,6 +228,27 @@ class Database:
                 }
             return None
 
+    async def list_sessions(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """按创建时间倒序列出会话，供 Replay UI 拉取历史。"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """SELECT id, query, final_answer, status, created_at, completed_at
+                   FROM sessions ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                (limit, offset),
+            )
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "query": r[1],
+                    "final_answer": r[2],
+                    "status": r[3],
+                    "created_at": r[4],
+                    "completed_at": r[5],
+                }
+                for r in rows
+            ]
+
 
 # 全局数据库实例
 db = Database()

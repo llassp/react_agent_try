@@ -1,6 +1,6 @@
 import asyncio
 from collections import deque
-from typing import Dict, List, Callable, Any, Optional, Deque
+from typing import Dict, List, Callable, Any, Optional, Deque, Awaitable
 from dataclasses import dataclass, field
 from datetime import datetime
 from loguru import logger
@@ -18,12 +18,18 @@ class Message:
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
+PersistenceHandler = Callable[["Message"], Awaitable[None]]
+
+
 class MessageQueue:
     """异步消息队列，用于 Agent 间通信和 SSE 推送
 
     特别地，对带 ``session_id`` 的事件会额外维护一个重放缓冲：
     ``/api/query`` 改成后台任务后，客户端拿到 session_id 再去建 SSE 连接之间存在时差，
     期间产生的 agent_start / thinking 等事件必须保留，否则 Dashboard 会看不到前期的执行轨迹。
+
+    还支持一个全局的 ``persistence_handler``：任何 ``publish`` 的事件都会异步落到它上面，
+    用来把事件流写进 ``event_logs`` 表，供历史会话回放。
     """
     
     def __init__(self):
@@ -33,6 +39,15 @@ class MessageQueue:
         self._session_subscribers: Dict[str, List[asyncio.Queue]] = {}
         # session_id -> 事件重放缓冲（环形队列）
         self._session_buffer: Dict[str, Deque[Message]] = {}
+        # 全局持久化回调；None 表示不落库
+        self._persistence_handler: Optional[PersistenceHandler] = None
+        # handler / persistence 派生的后台任务强引用集合，避免 asyncio 的弱引用 GC
+        # 把异步 handler 任务提前回收掉（Python 文档 asyncio.create_task 警告）。
+        self._handler_tasks: "set[asyncio.Task]" = set()
+
+    def set_persistence_handler(self, handler: Optional[PersistenceHandler]) -> None:
+        """设置/清除一个异步持久化回调。``publish`` 会在事件推给订阅者之后尝试调用。"""
+        self._persistence_handler = handler
 
     def ensure_session(self, session_id: str) -> None:
         """预先记录 session，保证第一条事件之前已存在重放缓冲。"""
@@ -44,6 +59,12 @@ class MessageQueue:
         self._session_buffer.pop(session_id, None)
         self._session_subscribers.pop(session_id, None)
     
+    def _spawn_handler(self, coro: Awaitable[None], label: str) -> None:
+        """给异步 handler 创建一个受 GC 保护的后台任务。"""
+        task = asyncio.create_task(coro, name=label)
+        self._handler_tasks.add(task)
+        task.add_done_callback(self._handler_tasks.discard)
+
     async def publish(self, event_type: str, agent_id: Optional[str], data: Dict[str, Any]):
         """发布消息到队列"""
         message = Message(event_type=event_type, agent_id=agent_id, data=data)
@@ -70,13 +91,23 @@ class MessageQueue:
                         queue.put_nowait(message)
                     except asyncio.QueueFull:
                         logger.warning(f"Queue full for session {session_id}")
-        
+
+        # 持久化回调（如果配置了）。用独立 task 异步写库，不阻塞 publish 的热路径。
+        if self._persistence_handler is not None:
+            try:
+                self._spawn_handler(
+                    self._persistence_handler(message),
+                    label=f"mq-persist:{event_type}",
+                )
+            except Exception as e:
+                logger.error(f"Failed to spawn persistence handler: {e}")
+
         # 调用事件处理器
         if event_type in self._event_handlers:
             for handler in self._event_handlers[event_type]:
                 try:
                     if asyncio.iscoroutinefunction(handler):
-                        asyncio.create_task(handler(message))
+                        self._spawn_handler(handler(message), label=f"mq-handler:{event_type}")
                     else:
                         handler(message)
                 except Exception as e:

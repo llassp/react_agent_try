@@ -6,8 +6,12 @@ from loguru import logger
 from core.llm import DeepSeekClient, TokenUsage
 
 
-MAX_CONTEXT_TOKENS = int(os.environ.get("MAX_CONTEXT_TOKENS", "128000"))
-COMPRESS_THRESHOLD = float(os.environ.get("CONTEXT_COMPRESS_THRESHOLD", "0.7"))
+# 默认窗口从 128k 压到 16k、压缩阈值从 0.7 压到 0.5：
+# - ReAct 每一轮都重发完整 messages + tools schema，窗口越大越晚触发压缩、
+#   中间轮次的冗余上下文就越多。16k 足够 4-5 轮工具调用，真需要可以用环境变量放宽。
+# - 0.5 的阈值意味着超过一半就开始摘要，而不是已经 9 成满才临时抱佛脚。
+MAX_CONTEXT_TOKENS = int(os.environ.get("MAX_CONTEXT_TOKENS", "16000"))
+COMPRESS_THRESHOLD = float(os.environ.get("CONTEXT_COMPRESS_THRESHOLD", "0.5"))
 TOOL_RESULT_MAX_CHARS = int(os.environ.get("TOOL_RESULT_MAX_CHARS", "20000"))
 
 
