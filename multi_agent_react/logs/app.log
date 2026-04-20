@@ -1,0 +1,64 @@
+2026-04-20 16:06:46 | INFO     | __main__:<module>:71 - Starting server on 0.0.0.0:8000
+2026-04-20 16:06:46 | INFO     | __main__:lifespan:24 - Starting Multi-Agent ReAct System...
+2026-04-20 16:07:20 | INFO     | __main__:<module>:71 - Starting server on 0.0.0.0:8000
+2026-04-20 16:07:20 | INFO     | __main__:lifespan:24 - Starting Multi-Agent ReAct System...
+2026-04-20 16:07:36 | INFO     | __main__:<module>:71 - Starting server on 0.0.0.0:8000
+2026-04-20 16:07:36 | INFO     | __main__:lifespan:24 - Starting Multi-Agent ReAct System...
+2026-04-20 16:07:56 | INFO     | __main__:<module>:71 - Starting server on 0.0.0.0:8000
+2026-04-20 16:07:56 | INFO     | __main__:lifespan:24 - Starting Multi-Agent ReAct System...
+2026-04-20 16:09:29 | INFO     | __main__:<module>:71 - Starting server on 0.0.0.0:8000
+2026-04-20 16:09:29 | INFO     | __main__:lifespan:24 - Starting Multi-Agent ReAct System...
+2026-04-20 16:10:54 | INFO     | __main__:<module>:71 - Starting server on 0.0.0.0:8000
+2026-04-20 16:10:54 | INFO     | __main__:lifespan:24 - Starting Multi-Agent ReAct System...
+2026-04-20 16:10:54 | INFO     | __main__:lifespan:26 - Database initialized
+2026-04-20 16:11:55 | INFO     | core.orchestrator:run:52 - Starting session 1a57c48a-645f-4956-a10b-ba84c46fed3b with query: 计算1+1
+2026-04-20 16:11:56 | ERROR    | core.llm:call:113 - API error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | ERROR    | core.orchestrator:_decompose_task:137 - Task decomposition error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | INFO     | core.orchestrator:run:59 - Task decomposed into 3 subtasks
+2026-04-20 16:11:56 | INFO     | core.agent:run:63 - Agent agent-1 starting task: 从角度 2 分析: 计算1+1
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: agent_start from agent: agent-1
+2026-04-20 16:11:56 | INFO     | core.agent:run:63 - Agent agent-2 starting task: 从角度 3 分析: 计算1+1
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: agent_start from agent: agent-2
+2026-04-20 16:11:56 | INFO     | core.agent:run:63 - Agent agent-0 starting task: 从角度 1 分析: 计算1+1
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: agent_start from agent: agent-0
+2026-04-20 16:11:56 | ERROR    | core.llm:call:113 - API error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | ERROR    | core.agent:run:215 - Agent agent-1 error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: error from agent: agent-1
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: agent_done from agent: agent-1
+2026-04-20 16:11:56 | ERROR    | core.llm:call:113 - API error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | ERROR    | core.agent:run:215 - Agent agent-0 error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: error from agent: agent-0
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: agent_done from agent: agent-0
+2026-04-20 16:11:56 | ERROR    | core.llm:call:113 - API error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | ERROR    | core.agent:run:215 - Agent agent-2 error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: error from agent: agent-2
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: agent_done from agent: agent-2
+2026-04-20 16:11:56 | INFO     | core.orchestrator:run:63 - All agents completed for session 1a57c48a-645f-4956-a10b-ba84c46fed3b
+2026-04-20 16:11:56 | ERROR    | core.llm:call:113 - API error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | ERROR    | core.orchestrator:_merge_results:236 - Result merging error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****here is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}
+2026-04-20 16:11:56 | INFO     | core.orchestrator:run:67 - Results merged for session 1a57c48a-645f-4956-a10b-ba84c46fed3b
+2026-04-20 16:11:56 | DEBUG    | core.message_queue:publish:60 - Published event: session_done from agent: None
+2026-04-20 16:13:16 | INFO     | __main__:<module>:71 - Starting server on 0.0.0.0:8000
+2026-04-20 16:13:16 | INFO     | __main__:lifespan:24 - Starting Multi-Agent ReAct System...
+2026-04-20 16:13:16 | INFO     | __main__:lifespan:26 - Database initialized
+2026-04-20 16:13:27 | INFO     | core.orchestrator:run:52 - Starting session 1a2b252d-6408-4a51-a772-fe632807a88d with query: 计算1+1
+2026-04-20 16:13:30 | INFO     | core.orchestrator:run:59 - Task decomposed into 3 subtasks
+2026-04-20 16:13:30 | INFO     | core.agent:run:63 - Agent agent-0 starting task: 计算第一个加数：1
+2026-04-20 16:13:30 | DEBUG    | core.message_queue:publish:60 - Published event: agent_start from agent: agent-0
+2026-04-20 16:13:30 | INFO     | core.agent:run:63 - Agent agent-2 starting task: 将两个加数的结果相加
+2026-04-20 16:13:30 | DEBUG    | core.message_queue:publish:60 - Published event: agent_start from agent: agent-2
+2026-04-20 16:13:30 | INFO     | core.agent:run:63 - Agent agent-1 starting task: 计算第二个加数：1
+2026-04-20 16:13:30 | DEBUG    | core.message_queue:publish:60 - Published event: agent_start from agent: agent-1
+2026-04-20 16:13:34 | DEBUG    | core.message_queue:publish:60 - Published event: token_update from agent: agent-0
+2026-04-20 16:13:34 | INFO     | core.agent:run:206 - Agent agent-0 completed in 1 iterations
+2026-04-20 16:13:34 | DEBUG    | core.message_queue:publish:60 - Published event: agent_done from agent: agent-0
+2026-04-20 16:13:35 | DEBUG    | core.message_queue:publish:60 - Published event: token_update from agent: agent-2
+2026-04-20 16:13:35 | INFO     | core.agent:run:206 - Agent agent-2 completed in 1 iterations
+2026-04-20 16:13:35 | DEBUG    | core.message_queue:publish:60 - Published event: agent_done from agent: agent-2
+2026-04-20 16:13:36 | DEBUG    | core.message_queue:publish:60 - Published event: token_update from agent: agent-1
+2026-04-20 16:13:36 | INFO     | core.agent:run:206 - Agent agent-1 completed in 1 iterations
+2026-04-20 16:13:36 | DEBUG    | core.message_queue:publish:60 - Published event: agent_done from agent: agent-1
+2026-04-20 16:13:36 | INFO     | core.orchestrator:run:63 - All agents completed for session 1a2b252d-6408-4a51-a772-fe632807a88d
+2026-04-20 16:13:38 | INFO     | core.orchestrator:run:67 - Results merged for session 1a2b252d-6408-4a51-a772-fe632807a88d
+2026-04-20 16:13:38 | DEBUG    | core.message_queue:publish:60 - Published event: session_done from agent: None
+2026-04-20 16:19:16 | INFO     | __main__:lifespan:29 - Shutting down...
