@@ -17,6 +17,12 @@ from storage.db import db
 router = APIRouter()
 
 
+# 后台任务强引用集合：asyncio 只对 Task 持弱引用，如果不保留强引用，
+# GC 可能在任务跑完之前把它回收，导致会话永远卡在 running 且 SSE 永远
+# 收不到 session_done。参考 Python 文档 asyncio.create_task 的警告。
+_background_tasks: "set[asyncio.Task]" = set()
+
+
 # 请求/响应模型
 class QueryRequest(BaseModel):
     query: str
@@ -128,12 +134,18 @@ async def create_query(request: QueryRequest) -> QueryAcceptedResponse:
         # 关键：在后台任务还没来得及 publish 任何事件之前就把缓冲建起来
         mq.ensure_session(session_id)
         
-        asyncio.create_task(_run_query_background(
-            session_id=session_id,
-            query=request.query,
-            num_agents=request.num_agents or 3,
-            max_iterations=request.max_iterations or 10,
-        ))
+        task = asyncio.create_task(
+            _run_query_background(
+                session_id=session_id,
+                query=request.query,
+                num_agents=request.num_agents or 3,
+                max_iterations=request.max_iterations or 10,
+            ),
+            name=f"query:{session_id}",
+        )
+        # 保留强引用直到任务结束，防止被 GC 悄悄回收
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
         
         return QueryAcceptedResponse(session_id=session_id, status="accepted")
     except Exception as e:

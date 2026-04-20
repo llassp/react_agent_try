@@ -614,14 +614,35 @@
             
             state.eventSource = new EventSource(`/sse/stream/${sessionId}`);
             
-            state.eventSource.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                handleEvent(data);
+            // 服务端用 sse_starlette 发送的是"具名事件"（event: xxx\ndata: ...），
+            // 按 W3C EventSource 规范这类消息不会走 onmessage，只会 dispatch 到
+            // 对应事件类型的监听器。所以必须对每个已知事件类型都 addEventListener，
+            // 否则 session_done / action / observation 等一个都收不到。
+            const SSE_EVENT_TYPES = [
+                'agent_start', 'thinking', 'thinking_delta', 'content_delta',
+                'action', 'observation', 'token_update', 'context_compressed',
+                'agent_done', 'session_done', 'error', 'heartbeat'
+            ];
+            const dispatch = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleEvent(data);
+                } catch (e) {
+                    console.error('SSE parse error:', e, event.data);
+                }
             };
+            SSE_EVENT_TYPES.forEach(et => {
+                state.eventSource.addEventListener(et, dispatch);
+            });
+            // 兜底：如果后端未来改回默认 message 事件，也能收到
+            state.eventSource.onmessage = dispatch;
             
             state.eventSource.onerror = (error) => {
                 console.error('SSE Error:', error);
-                state.eventSource.close();
+                // readyState=2 (CLOSED) 才真的关，其它情况 EventSource 会自动重连
+                if (state.eventSource && state.eventSource.readyState === EventSource.CLOSED) {
+                    state.eventSource.close();
+                }
             };
         }
         
